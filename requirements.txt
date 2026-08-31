@@ -1,0 +1,4 @@
+faster-whisper
+deep-translator
+gTTS
+pydub

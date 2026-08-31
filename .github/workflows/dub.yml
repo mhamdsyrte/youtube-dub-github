@@ -1,0 +1,83 @@
+name: Dub YouTube Video Audio
+
+on:
+  workflow_dispatch:
+    inputs:
+      audio_release_tag:
+        description: 'اسم الإصدار (release tag) اللي فيه الصوت المرفوع من الجهاز'
+        required: true
+        type: string
+      whisper_model:
+        description: 'حجم موديل التفريغ الصوتي (كل ما كبر، زادت الدقة وقل السرعة)'
+        required: false
+        type: choice
+        default: 'small'
+        options:
+          - tiny
+          - base
+          - small
+          - medium
+
+permissions:
+  contents: write
+
+jobs:
+  dub:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: requirements.txt
+
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download source audio from release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          mkdir -p work
+          gh release download "${{ github.event.inputs.audio_release_tag }}" \
+            -D work/ -R ${{ github.repository }}
+          echo "✅ محتويات work/:"
+          ls -la work/
+
+      - name: Run dubbing pipeline
+        env:
+          WHISPER_MODEL: ${{ github.event.inputs.whisper_model }}
+        run: python scripts/dub.py
+
+      - name: Upload dubbed audio
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dubbed-audio
+          path: output/dubbed_audio.mp3
+          retention-days: 7
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: work-dir-debug
+          path: work/
+          retention-days: 3
+
+      - name: Delete temporary release and tag
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release delete "${{ github.event.inputs.audio_release_tag }}" \
+            --yes -R ${{ github.repository }} || true
+          git push origin ":refs/tags/${{ github.event.inputs.audio_release_tag }}" || true
