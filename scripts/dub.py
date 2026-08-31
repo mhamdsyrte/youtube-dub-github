@@ -1,9 +1,10 @@
 import os
 import sys
 import time
+import asyncio
 import subprocess
 from deep_translator import GoogleTranslator
-from gtts import gTTS
+import edge_tts
 from pydub import AudioSegment
 from faster_whisper import WhisperModel
 
@@ -13,6 +14,11 @@ os.makedirs(WORK_DIR, exist_ok=True)
 # يمكن التحكم فيه من الـ workflow عبر env var WHISPER_MODEL
 # القيم الممكنة: tiny, base, small, medium, large-v3
 WHISPER_MODEL_SIZE = os.environ.get("WHISPER_MODEL", "small")
+
+# صوت Edge TTS العربي (بديل gTTS، جودة طبيعية أعلى بكثير)
+# أصوات عربية متاحة (أمثلة): ar-SA-HamedNeural (رجالي)، ar-SA-ZariyahNeural (نسائي)،
+# ar-EG-ShakirNeural (رجالي مصري)، ar-EG-SallyNeural (نسائي مصري)
+EDGE_VOICE = os.environ.get("EDGE_VOICE", "ar-SA-HamedNeural")
 
 AUDIO_EXTENSIONS = (".mp3", ".wav", ".m4a", ".ogg", ".opus", ".aac")
 
@@ -86,8 +92,22 @@ def get_duration_ms(path):
     return int(float(out.stdout.strip()) * 1000)
 
 
+def synthesize_tts(text, out_path, rate_percent=0):
+    """يولّد صوت عربي طبيعي عبر Edge TTS. rate_percent يضبط سرعة الكلام
+    نفسها (زي +15% أو -20%) بدون أي تأثير على طبقة الصوت (pitch)،
+    عكس أسلوب atempo القديم اللي كان يشوّه الصوت عند التسريع/التبطيء."""
+    sign = "+" if rate_percent >= 0 else ""
+    rate_str = f"{sign}{rate_percent}%"
+
+    async def _run():
+        communicate = edge_tts.Communicate(text, EDGE_VOICE, rate=rate_str)
+        await communicate.save(out_path)
+
+    asyncio.run(_run())
+
+
 def build_dubbed_audio(segments, total_duration_ms, output_audio_path):
-    print("🔊 جاري توليد وتركيب الصوت العربي...")
+    print(f"🔊 جاري توليد وتركيب الصوت العربي (Edge TTS / {EDGE_VOICE})...")
     final_audio = AudioSegment.silent(duration=total_duration_ms)
 
     for i, seg in enumerate(segments):
@@ -96,29 +116,29 @@ def build_dubbed_audio(segments, total_duration_ms, output_audio_path):
             continue
 
         tmp_mp3 = os.path.join(WORK_DIR, f"seg_{i}.mp3")
-
-        def _tts():
-            gTTS(text=text, lang="ar").save(tmp_mp3)
+        target_duration = seg["end"] - seg["start"]
 
         try:
-            retry(_tts, tries=3, delay=2, what=f"توليد صوت الجملة {i+1}")
+            retry(lambda: synthesize_tts(text, tmp_mp3, 0), tries=3, delay=2,
+                  what=f"توليد صوت الجملة {i+1}")
         except Exception:
             print(f"   ⚠️ تعذّر توليد صوت الجملة {i+1}، تم تخطيها")
             continue
 
         clip = AudioSegment.from_mp3(tmp_mp3)
-        target_duration = seg["end"] - seg["start"]
 
+        # لو المدة بعيدة عن مدة الجملة الأصلية، نعيد توليد الصوت بسرعة كلام
+        # معدّلة (مش تسريع الملف الصوتي بعد التوليد) — نتيجة أنظف وأطبع
         if len(clip) > 0 and target_duration > 0:
-            speed_ratio = len(clip) / target_duration
-            speed_ratio = max(0.75, min(speed_ratio, 1.6))
-            if abs(speed_ratio - 1.0) > 0.05:
-                sped_path = os.path.join(WORK_DIR, f"seg_{i}_speed.mp3")
-                subprocess.run(
-                    ["ffmpeg", "-y", "-i", tmp_mp3, "-filter:a", f"atempo={speed_ratio}", sped_path],
-                    check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                )
-                clip = AudioSegment.from_mp3(sped_path)
+            ratio = len(clip) / target_duration
+            if abs(ratio - 1.0) > 0.08:
+                rate_percent = int(max(-40, min(60, (ratio - 1.0) * 100)))
+                try:
+                    retry(lambda: synthesize_tts(text, tmp_mp3, rate_percent), tries=2, delay=1,
+                          what=f"إعادة ضبط سرعة الجملة {i+1}")
+                    clip = AudioSegment.from_mp3(tmp_mp3)
+                except Exception:
+                    pass  # نكمل بالنسخة الأولى لو فشلت إعادة الضبط
 
         # لو المقطع يتجاوز مدة الصوت الكلية (آخر جملة أحيانًا)، نقصه بدل ما نمدد الصوت الكلي
         start_pos = int(seg["start"])
@@ -151,16 +171,21 @@ def main():
 
     print(f"🎧 ملف الصوت المصدري: {audio_path}")
 
-    segments = transcribe(audio_path)
-    if not segments:
-        print("❌ ما قدر يستخرج أي كلام من الصوت (ممكن يكون صامت أو غير واضح)")
-        sys.exit(1)
-
-    translate_segments(segments)
     total_duration = get_duration_ms(audio_path)
-
     os.makedirs("output", exist_ok=True)
     dubbed_audio_path = os.path.join("output", "dubbed_audio.mp3")
+
+    segments = transcribe(audio_path)
+    if not segments:
+        # صوت موجود لكن ما فيه كلام واضح (صامت/موسيقى بدون غناء/ضجيج).
+        # ما نفشّل التشغيلة، نطلع صوت صامت بنفس المدة عشان الخطوات اللي
+        # بعدها (الرفع + الدمج المحلي) تكمل عادي بدون دبلجة.
+        print("⚠️ ما فيه كلام واضح بالصوت (يمكن صامت أو موسيقى فقط) — تخطي الدبلجة")
+        AudioSegment.silent(duration=total_duration).export(dubbed_audio_path, format="mp3")
+        print(f"🎉 خلص (بدون دبلجة)! ملف الصوت بمسار: {dubbed_audio_path}")
+        return
+
+    translate_segments(segments)
     build_dubbed_audio(segments, total_duration, dubbed_audio_path)
 
     print(f"🎉 خلص! ملف الصوت المدبلج بمسار: {dubbed_audio_path}")

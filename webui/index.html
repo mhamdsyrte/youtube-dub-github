@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>محطة الدبلجة</title>
+<style>
+  @font-face {
+    font-family: 'system';
+    src: local('Segoe UI'), local('Tahoma');
+  }
+  :root {
+    --bg: #0d1414;
+    --panel: #131c1c;
+    --panel-2: #182323;
+    --line: #223030;
+    --text: #e8f0ee;
+    --text-dim: #8fa8a4;
+    --accent: #3ddc97;
+    --accent-dim: #1e6b4d;
+    --warn: #e0a83d;
+    --err: #e0603d;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'system', 'Segoe UI', Tahoma, sans-serif;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    padding: 20px 16px 60px;
+    max-width: 640px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 4px;
+    padding-bottom: 14px;
+    border-bottom: 1px solid var(--line);
+  }
+  header h1 {
+    font-size: 1.3rem;
+    font-weight: 700;
+    margin: 0;
+    letter-spacing: -0.02em;
+  }
+  header .count {
+    font-size: 0.85rem;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .intro {
+    color: var(--text-dim);
+    font-size: 0.88rem;
+    line-height: 1.6;
+    margin: 14px 0 20px;
+  }
+
+  .add-box {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+    margin-bottom: 22px;
+  }
+  .add-box input[type=text] {
+    width: 100%;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 12px 14px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    direction: ltr;
+    text-align: right;
+    margin-bottom: 10px;
+  }
+  .add-box input[type=text]::placeholder { color: #5c7370; }
+  .add-row {
+    display: flex;
+    gap: 8px;
+  }
+  select {
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.85rem;
+  }
+  button {
+    font-family: inherit;
+    cursor: pointer;
+    border: none;
+    border-radius: 8px;
+    font-size: 0.92rem;
+    padding: 10px 18px;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #06231a;
+    font-weight: 700;
+    flex: 1;
+  }
+  .btn-primary:disabled {
+    background: #2a3736;
+    color: #64807a;
+    cursor: not-allowed;
+  }
+  .btn-primary:active:not(:disabled) { transform: scale(0.98); }
+  .queue-note {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin-top: 8px;
+  }
+  .error-msg {
+    color: var(--err);
+    font-size: 0.82rem;
+    margin-top: 8px;
+    display: none;
+  }
+
+  .tasks { display: flex; flex-direction: column; gap: 10px; }
+  .task {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px;
+  }
+  .task-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 10px;
+    margin-bottom: 10px;
+  }
+  .task-url {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    direction: ltr;
+    text-align: right;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 78%;
+  }
+  .task-del {
+    background: transparent;
+    color: var(--text-dim);
+    padding: 2px 8px;
+    font-size: 1rem;
+    line-height: 1;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+  }
+  .task-del:active { background: var(--panel-2); }
+
+  .bar-track {
+    background: var(--panel-2);
+    border-radius: 6px;
+    height: 8px;
+    overflow: hidden;
+    margin-bottom: 8px;
+  }
+  .bar-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 6px;
+    transition: width 0.6s ease;
+  }
+  .task.status-error .bar-fill { background: var(--err); }
+  .task.status-done .bar-fill { background: var(--accent); }
+  .task.status-queued .bar-fill { background: var(--text-dim); }
+
+  .task-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: var(--text-dim);
+  }
+  .task-msg { color: var(--text); }
+  .task.status-error .task-msg { color: var(--err); }
+  .task.status-done .task-msg { color: var(--accent); }
+  .task-pct { font-variant-numeric: tabular-nums; }
+
+  .empty {
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    padding: 30px 10px;
+  }
+
+  .pulse {
+    animation: pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.55; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎙️ محطة الدبلجة</h1>
+  <span class="count" id="queue-count">0/5</span>
+</header>
+
+<p class="intro">
+  حط رابط فيديو يوتيوب واضغط دبلجة. تقدر تضيف حتى ٥ روابط ويشتغلون
+  واحد بعد الثاني — سيّب الجهاز وارجع له بعدين، النتيجة بتكون محفوظة
+  بمجلد التنزيلات.
+</p>
+
+<div class="add-box">
+  <input type="text" id="url-input" placeholder="https://youtu.be/xxxxxxx" inputmode="url">
+  <div class="add-row">
+    <select id="model-select">
+      <option value="tiny">tiny (أسرع، أقل دقة)</option>
+      <option value="base">base</option>
+      <option value="small" selected>small (افتراضي)</option>
+      <option value="medium">medium (أدق، أبطأ)</option>
+    </select>
+    <button class="btn-primary" id="add-btn">دبلجة</button>
+  </div>
+  <div class="error-msg" id="error-msg"></div>
+  <div class="queue-note" id="queue-note"></div>
+</div>
+
+<div class="tasks" id="tasks"></div>
+<div class="empty" id="empty-state">ما فيه فيديوهات بالقائمة بعد.</div>
+
+<script>
+const STAGE_LABELS = {
+  queued: "بانتظار الدور",
+  downloading_video: "تحميل الفيديو",
+  extracting_audio: "فصل الصوت",
+  uploading_audio: "رفع الصوت",
+  running_on_github: "معالجة على GitHub",
+  downloading_dubbed_audio: "تنزيل الصوت المدبلج",
+  merging: "دمج نهائي",
+  done: "منتهي",
+  error: "خطأ",
+};
+
+const tasksEl = document.getElementById('tasks');
+const emptyEl = document.getElementById('empty-state');
+const countEl = document.getElementById('queue-count');
+const addBtn = document.getElementById('add-btn');
+const urlInput = document.getElementById('url-input');
+const modelSelect = document.getElementById('model-select');
+const errorMsg = document.getElementById('error-msg');
+const queueNote = document.getElementById('queue-note');
+
+function esc(s) {
+  const d = document.createElement('div');
+  d.textContent = s || '';
+  return d.innerHTML;
+}
+
+function shortUrl(u) {
+  return u.length > 45 ? u.slice(0, 45) + '…' : u;
+}
+
+function render(tasks) {
+  const active = tasks.filter(t => t.status !== 'done' && t.status !== 'error');
+  countEl.textContent = `${active.length}/5`;
+  addBtn.disabled = active.length >= 5;
+  queueNote.textContent = active.length >= 5
+    ? 'القائمة ممتلئة (٥ مهام) — احذف مهمة أو انتظر انتهاء واحدة.'
+    : '';
+
+  if (tasks.length === 0) {
+    tasksEl.innerHTML = '';
+    emptyEl.style.display = 'block';
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  tasksEl.innerHTML = tasks.slice().reverse().map(t => {
+    const pct = Math.round(t.progress || 0);
+    const label = STAGE_LABELS[t.status] || t.status;
+    const sizeInfo = t.video_size ? ` · ${esc(t.video_size)}` : '';
+    const pulsing = (t.status !== 'done' && t.status !== 'error' && t.status !== 'queued') ? 'pulse' : '';
+    return `
+      <div class="task status-${t.status}">
+        <div class="task-top">
+          <div class="task-url" dir="ltr">${esc(shortUrl(t.url))}</div>
+          <button class="task-del" data-id="${t.id}" title="حذف/إلغاء">✕</button>
+        </div>
+        <div class="bar-track"><div class="bar-fill ${pulsing}" style="width:${pct}%"></div></div>
+        <div class="task-meta">
+          <span class="task-msg">${esc(t.message || label)}</span>
+          <span class="task-pct">${pct}%${sizeInfo}</span>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  document.querySelectorAll('.task-del').forEach(btn => {
+    btn.onclick = () => deleteTask(btn.dataset.id);
+  });
+}
+
+async function fetchTasks() {
+  try {
+    const res = await fetch('/api/tasks');
+    const data = await res.json();
+    render(data);
+  } catch (e) {
+    // السيرفر متوقف مؤقتًا أو الشبكة قاطعة — نحاول مرة ثانية بالدورة الجاية بدون ما نمسح الشاشة
+  }
+}
+
+async function addTask() {
+  const url = urlInput.value.trim();
+  errorMsg.style.display = 'none';
+  if (!url) return;
+  addBtn.disabled = true;
+  try {
+    const res = await fetch('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url, whisper_model: modelSelect.value }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      errorMsg.textContent = data.error || 'صار خطأ';
+      errorMsg.style.display = 'block';
+    } else {
+      urlInput.value = '';
+      fetchTasks();
+    }
+  } catch (e) {
+    errorMsg.textContent = 'تعذّر الاتصال بالسيرفر المحلي';
+    errorMsg.style.display = 'block';
+  } finally {
+    addBtn.disabled = false;
+  }
+}
+
+async function deleteTask(id) {
+  await fetch('/api/tasks/' + id, { method: 'DELETE' });
+  fetchTasks();
+}
+
+addBtn.addEventListener('click', addTask);
+urlInput.addEventListener('keydown', e => { if (e.key === 'Enter') addTask(); });
+
+fetchTasks();
+setInterval(fetchTasks, 2500);
+</script>
+</body>
+</html>

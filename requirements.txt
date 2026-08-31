@@ -1,4 +1,4 @@
 faster-whisper
 deep-translator
-gTTS
+edge-tts
 pydub
