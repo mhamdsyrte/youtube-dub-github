@@ -167,7 +167,7 @@ def run_pipeline(url, whisper_model, progress_cb, cancel_check=None, task_id="x"
     progress_cb(status="extracting_audio", progress=STAGE_RANGE["extracting_audio"][0],
                 video_size=video_size_human, message="جاري فصل الصوت من الفيديو...")
     r = _run(["ffmpeg", "-y", "-i", video_file, "-vn", "-ar", "16000", "-ac", "1",
-              "-b:a", "64k", audio_file, "-loglevel", "error"])
+              "-b:a", "64k", audio_file, "-loglevel", "error"], timeout=1800)
     if r.returncode != 0 or not os.path.exists(audio_file):
         raise PipelineError(f"فشل فصل الصوت: {r.stderr.strip()[:300]}")
 
@@ -253,7 +253,7 @@ def run_pipeline(url, whisper_model, progress_cb, cancel_check=None, task_id="x"
                 message="جاري دمج الصوت مع الفيديو...")
     r = _run(["ffmpeg", "-y", "-i", video_file, "-i", dubbed_audio_file,
               "-c:v", "copy", "-map", "0:v:0", "-map", "1:a:0", "-shortest",
-              final_file, "-loglevel", "error"])
+              final_file, "-loglevel", "error"], timeout=1800)
     if r.returncode != 0 or not os.path.exists(final_file):
         raise PipelineError(f"فشل دمج الفيديو النهائي: {r.stderr.strip()[:300]}")
 
