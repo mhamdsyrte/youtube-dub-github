@@ -171,13 +171,14 @@ def run_pipeline(url, whisper_model, progress_cb, cancel_check=None, task_id="x"
     if r.returncode != 0 or not os.path.exists(audio_file):
         raise PipelineError(f"فشل فصل الصوت: {r.stderr.strip()[:300]}")
 
-    # ---------- 3) رفع الصوت فقط كإصدار مؤقت ----------
+    # ---------- 3) رفع الصوت فقط كإصدار مؤقت (صبور: يعيد المحاولة لو النت بطيء/متقطع) ----------
     check_cancel()
     progress_cb(status="uploading_audio", progress=STAGE_RANGE["uploading_audio"][0],
                 message="جاري رفع الصوت لـ GitHub...")
-    r = _run(["gh", "release", "create", tag, audio_file, "--repo", repo,
-              "--title", f"Temp audio {tag}",
-              "--notes", "رفع مؤقت لمعالجة الدبلجة، يُحذف تلقائيًا بعد الانتهاء"])
+    r = _run_patient(["gh", "release", "create", tag, audio_file, "--repo", repo,
+                       "--title", f"Temp audio {tag}",
+                       "--notes", "رفع مؤقت لمعالجة الدبلجة، يُحذف تلقائيًا بعد الانتهاء"],
+                      timeout=90, cancel_check=cancel_check)
     if r.returncode != 0:
         raise PipelineError(f"فشل رفع الصوت: {r.stderr.strip()[:300]}")
 
@@ -186,8 +187,9 @@ def run_pipeline(url, whisper_model, progress_cb, cancel_check=None, task_id="x"
     progress_cb(status="running_on_github", progress=STAGE_RANGE["running_on_github"][0],
                 message="جاري تشغيل الدبلجة على GitHub Actions...")
     trigger_time = time.time()
-    r = _run(["gh", "workflow", "run", "dub.yml", "--repo", repo,
-              "-f", f"audio_release_tag={tag}", "-f", f"whisper_model={whisper_model}"])
+    r = _run_patient(["gh", "workflow", "run", "dub.yml", "--repo", repo,
+                       "-f", f"audio_release_tag={tag}", "-f", f"whisper_model={whisper_model}"],
+                      timeout=60, cancel_check=cancel_check)
     if r.returncode != 0:
         raise PipelineError(f"فشل تشغيل الـ workflow: {r.stderr.strip()[:300]}")
 
@@ -243,7 +245,8 @@ def run_pipeline(url, whisper_model, progress_cb, cancel_check=None, task_id="x"
     check_cancel()
     progress_cb(status="downloading_dubbed_audio", progress=STAGE_RANGE["downloading_dubbed_audio"][0],
                 message="جاري تنزيل الصوت المدبلج...")
-    r = _run(["gh", "run", "download", str(run_id), "--repo", repo, "-n", "dubbed-audio", "-D", work])
+    r = _run_patient(["gh", "run", "download", str(run_id), "--repo", repo,
+                       "-n", "dubbed-audio", "-D", work], timeout=60, cancel_check=cancel_check)
     if r.returncode != 0 or not os.path.exists(dubbed_audio_file):
         raise PipelineError("لم يتم العثور على ملف الصوت المدبلج بعد التنزيل")
 
