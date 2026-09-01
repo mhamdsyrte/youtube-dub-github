@@ -42,6 +42,12 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-model-${{ github.event.inputs.whisper_model }}
+
       - name: Download source audio from release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
