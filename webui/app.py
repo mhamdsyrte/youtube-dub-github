@@ -33,7 +33,6 @@ os.makedirs(STATE_DIR, exist_ok=True)
 app = Flask(__name__)
 lock = threading.RLock()
 tasks = []
-worker_running = False
 cancel_flags = {}  # task_id -> bool
 
 
@@ -71,19 +70,27 @@ def update_task(task_id, **fields):
         save_state()
 
 
+MAX_CONCURRENT_WORKERS = int(os.environ.get("MAX_CONCURRENT_WORKERS", "2"))
+active_workers = 0
+
+
 def worker_loop():
-    global worker_running
+    global active_workers
     while True:
         with lock:
             next_task = next((t for t in tasks if t["status"] == "queued"), None)
             if not next_task:
-                worker_running = False
+                active_workers -= 1
                 return
             task_id = next_task["id"]
             url = next_task["url"]
             whisper_model = next_task["whisper_model"]
-
-        update_task(task_id, status="downloading_video", progress=1, message="جاري البدء...")
+            # نحجز المهمة فورًا (نغيّر حالتها) قبل ما نطلق القفل، عشان عامل
+            # ثاني ما يمسك نفس المهمة بنفس اللحظة
+            next_task["status"] = "downloading_video"
+            next_task["progress"] = 1
+            next_task["message"] = "جاري البدء..."
+            save_state()
 
         def progress_cb(**fields):
             update_task(task_id, **fields)
@@ -92,7 +99,7 @@ def worker_loop():
             return cancel_flags.get(task_id, False)
 
         try:
-            final_path = run_pipeline(url, whisper_model, progress_cb, cancel_check)
+            final_path = run_pipeline(url, whisper_model, progress_cb, cancel_check, task_id=task_id)
             update_task(task_id, status="done", progress=100, message="تم بنجاح ✅",
                         final_path=final_path)
         except PipelineError as e:
@@ -104,13 +111,22 @@ def worker_loop():
 
 
 def ensure_worker():
-    global worker_running
+    """يطلق عامل معالجة إضافي لو فيه مهام بالانتظار وما وصلنا للحد الأقصى
+    من العمال المتزامنين (MAX_CONCURRENT_WORKERS)."""
+    global active_workers
     with lock:
-        if worker_running:
+        if active_workers >= MAX_CONCURRENT_WORKERS:
             return
-        worker_running = True
+        active_workers += 1
     t = threading.Thread(target=worker_loop, daemon=True)
     t.start()
+
+
+def ensure_workers():
+    """يطلق عدة عمال دفعة وحدة (يُستدعى عند إضافة مهمة جديدة أو عند بدء
+    السيرفر) — كل عامل يمسك مهمة مختلفة ويعالجها بالتوازي مع البقية."""
+    for _ in range(MAX_CONCURRENT_WORKERS):
+        ensure_worker()
 
 
 @app.route("/")
@@ -156,7 +172,7 @@ def add_task():
         tasks.append(task)
         save_state()
 
-    ensure_worker()
+    ensure_workers()
     return jsonify(task)
 
 
@@ -177,7 +193,8 @@ def delete_task(task_id):
 
 if __name__ == "__main__":
     load_state()
-    ensure_worker()  # يكمل أي مهام كانت "queued" ولسه ما بدأت
+    ensure_workers()  # يكمل أي مهام كانت "queued" ولسه ما بدأت
     port = int(os.environ.get("PORT", 8890))
     print(f"🌐 افتح المتصفح على: http://127.0.0.1:{port}")
+    print(f"⚙️ عدد الفيديوهات اللي تشتغل بنفس الوقت: {MAX_CONCURRENT_WORKERS}")
     app.run(host="127.0.0.1", port=port, threaded=True)

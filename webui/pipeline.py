@@ -21,6 +21,15 @@ class PipelineError(Exception):
     pass
 
 
+class _TimeoutResult:
+    """نتيجة وهمية تُرجع لو الأمر علّق وتجاوز المهلة، بدل ما يعلّق البرنامج
+    كامل لحد ما يرجع النت. توافق واجهة subprocess.CompletedProcess (returncode/stdout/stderr)."""
+    def __init__(self, message="انتهت مهلة الأمر (تعذّر الاتصال بالشبكة)"):
+        self.returncode = 124
+        self.stdout = ""
+        self.stderr = message
+
+
 def human_size(num_bytes):
     if not num_bytes:
         return None
@@ -32,8 +41,31 @@ def human_size(num_bytes):
     return f"{n:.1f} TB"
 
 
-def _run(cmd, **kwargs):
-    return subprocess.run(cmd, capture_output=True, text=True, **kwargs)
+def _run(cmd, timeout=45, **kwargs):
+    """يشغّل أمر مع مهلة زمنية إجبارية — لو النت متعلّق (مو مقطوع تمامًا،
+    بس بطيء جدًا)، الأمر يفشل بعد `timeout` ثانية بدل ما يعلّق البرنامج
+    للأبد وما يقدر يعيد المحاولة."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, **kwargs)
+    except subprocess.TimeoutExpired:
+        return _TimeoutResult()
+
+
+def _run_patient(cmd, max_wait_seconds=1800, retry_delay=15, timeout=45, cancel_check=None):
+    """لأوامر الشبكة الحرجة (رفع/تنزيل/تشغيل) — يعيد المحاولة كل retry_delay
+    ثانية لحد ما ينجح أو تنتهي max_wait_seconds (افتراضيًا 30 دقيقة).
+    يستخدم عند احتمال إن النت يكون منقطع فترة قصيرة وقت تنفيذ هذي الخطوة
+    بالضبط، بدون ما نفشّل المهمة كلها فورًا."""
+    deadline = time.time() + max_wait_seconds
+    last = None
+    while time.time() < deadline:
+        if cancel_check and cancel_check():
+            raise PipelineError("تم إلغاء المهمة بواسطة المستخدم")
+        last = _run(cmd, timeout=timeout)
+        if last.returncode == 0:
+            return last
+        time.sleep(retry_delay)
+    return last
 
 
 def has_audio_stream(video_path):
@@ -63,15 +95,17 @@ STAGE_RANGE = {
 }
 
 
-def run_pipeline(url, whisper_model, progress_cb, cancel_check=None):
+def run_pipeline(url, whisper_model, progress_cb, cancel_check=None, task_id="x"):
     """
     ينفّذ خط الأنابيب الكامل لفيديو واحد ويرجع مسار الملف النهائي.
     progress_cb(status=None, progress=None, message=None, **extra) يُستدعى
     باستمرار لتحديث حالة المهمة.
     cancel_check() دالة اختيارية ترجع True لو المستخدم طلب إلغاء المهمة.
+    task_id يُدمج بأسماء المجلدات/الملفات عشان ميضمن عدم تصادم مهمتين
+    بدأتا بنفس الثانية بالضبط لما يشتغلن بالتوازي.
     """
     repo = get_repo()
-    tag = f"audio-{int(time.time())}"
+    tag = f"audio-{task_id}-{int(time.time())}"
     work = os.path.expanduser(f"~/dub_local/{tag}")
     os.makedirs(work, exist_ok=True)
 
@@ -81,7 +115,7 @@ def run_pipeline(url, whisper_model, progress_cb, cancel_check=None):
     output_dir = os.path.expanduser("~/storage/downloads")
     os.makedirs(output_dir, exist_ok=True)
     final_file = os.path.join(
-        output_dir, f"dubbed_{datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
+        output_dir, f"dubbed_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{task_id}.mp4"
     )
 
     def check_cancel():
